@@ -452,8 +452,10 @@ struct rs_rgbd_module_config_t {
   int sync_size = 300;
   bool global_time = true;
   bool correct_ts = true;
+  bool set_custom_ae = false;
   bool enable_rgb = true;
   bool enable_ir = true;
+  bool enable_ir_left_only = false;
   bool enable_depth = true;
   bool enable_emitter = true;
 
@@ -468,6 +470,7 @@ struct rs_rgbd_module_config_t {
   std::string ir_format = "Y8";
   int ir_frame_rate = 30;
   double ir_exposure = 10000.0;
+  double ir_gain = 16.0;
 
   int depth_width = 640;
   int depth_height = 480;
@@ -536,7 +539,8 @@ struct rs_rgbd_module_t {
                         config_.ir_height,
                         rs2_format_convert(config_.ir_format),
                         config_.ir_frame_rate);
-      cfg.enable_stream(RS2_STREAM_INFRARED,
+        if (!config_.enable_ir_left_only)        
+          cfg.enable_stream(RS2_STREAM_INFRARED,
                         2,
                         config_.ir_width,
                         config_.ir_height,
@@ -653,6 +657,7 @@ struct intel_d435i_t {
 			stereo_.set_option(RS2_OPTION_EXPOSURE, rgbd_conf_.ir_exposure);
       stereo_.set_option(RS2_OPTION_EMITTER_ENABLED, rgbd_conf_.enable_emitter);
       stereo_.set_option(RS2_OPTION_GLOBAL_TIME_ENABLED, rgbd_conf_.global_time);
+      stereo_.set_option(RS2_OPTION_GAIN, rgbd_conf_.ir_gain);
 
       // IMPORTANT: Indexing for stereo camera starts from 1 not 0.
       cfg.enable_stream(RS2_STREAM_INFRARED,

@@ -11,9 +11,26 @@
 #include <librealsense2/rs.hpp>
 
 #include "rs4se.hpp"
+#include <vo_autoexpose/vo_autoexpose.h>
+#include "../include/auto_exp/auto_exp.h"
+
+#include <chrono>  
+#include <math.h>
 
 #define Vector3StampedMsg geometry_msgs::Vector3Stamped
 #define ImuMsg sensor_msgs::Imu
+
+using std::chrono::high_resolution_clock;
+using std::chrono::duration_cast;
+using std::chrono::duration;
+using std::chrono::milliseconds;
+
+
+ExpGainController controller; // Instance of exposure/gain automatic controller
+
+exp_node::ExpNode aer_controller; 
+
+
 
 // Signal handler
 bool keep_running = true;
@@ -32,10 +49,128 @@ std::string ros_node_name(int argc, char *argv[]) {
   FATAL("Failed to find node name?");
 }
 
+
+  void set_exposure_gain(std_msgs::Header &header, cv::Mat &cv_frame, const rs2::video_frame &vf) {
+    const auto sequence = vf.get_frame_metadata(RS2_FRAME_METADATA_FRAME_COUNTER);
+    const auto actual_ir_exposure = vf.get_frame_metadata(RS2_FRAME_METADATA_ACTUAL_EXPOSURE);
+      const auto actual_ir_gain = vf.get_frame_metadata(RS2_FRAME_METADATA_GAIN_LEVEL);
+      //std::cout << " vf frame gain " << vf_actual_ir_gain <<  std::endl;
+      double actual_ir_gain_db = 20*log10(double(actual_ir_gain));
+      //std::cout << " gain actual " <<  actual_ir_gain << std::endl;
+      //std::cout << " exposure actual " <<  actual_ir_exposure << std::endl;
+      //std::cout << " frame count " << sequence <<  std::endl;
+      // Add new frame
+      auto t1 = high_resolution_clock::now();
+      controller.add_frame(0,cv_frame,float(actual_ir_exposure)/1000000,actual_ir_gain_db,header.seq,header.stamp.toSec());
+
+      // Update the parameters
+      auto t2 = high_resolution_clock::now();
+      //ExposureParameters new_exposure_params = controller.update_params(GRADINFO_SCORE,EV_CORRECTIONS,IMU_ESTIM);
+      ExposureParameters new_exposure_params = controller.update_params(GRADINFO_SCORE,GAMMA_CORRECTIONS,IMU_ESTIM);
+      //ExposureParameters new_exposure_params = controller.update_params(GRADINFO_SCORE,GAMMA_CORRECTIONS,OPTIFLOW_ESTIM);
+
+      auto t3 = high_resolution_clock::now();
+      unsigned long long int next_ir_exposure = (unsigned long long int)(1000000*new_exposure_params.exposure);
+      unsigned long long int next_ir_gain = (unsigned long long int)(pow(10,new_exposure_params.gain/20));
+      //std::cout << " gain next " <<  next_ir_gain << std::endl;
+      //std::cout << " exposure next " <<  next_ir_exposure << std::endl;
+    if (sequence % 2 == 0) {
+
+      if (sequence % 4 != 0 && next_ir_gain != actual_ir_gain) {
+        rs2::sensor exposure_sensor = *rs2::sensor_from_frame(vf);
+
+        if (next_ir_gain <16) exposure_sensor.set_option(RS2_OPTION_GAIN, 16);
+        else if (next_ir_gain > 248) exposure_sensor.set_option(RS2_OPTION_GAIN, 248);
+        else exposure_sensor.set_option(RS2_OPTION_GAIN, next_ir_gain);
+        //std::cout << " gain " <<  next_ir_gain << std::endl;
+      }
+      else if (sequence % 4 == 0 && next_ir_exposure != actual_ir_exposure) {
+        rs2::sensor exposure_sensor = *rs2::sensor_from_frame(vf);
+        if (next_ir_exposure < 0) exposure_sensor.set_option(RS2_OPTION_EXPOSURE, 1);
+        else if (next_ir_exposure > 200000) exposure_sensor.set_option(RS2_OPTION_EXPOSURE, 200000);
+        else exposure_sensor.set_option(RS2_OPTION_EXPOSURE, next_ir_exposure);
+        //std::cout << " exposure " <<  next_ir_exposure << std::endl;
+      }
+    }
+
+
+
+
+    // Debug: Printing out processing times
+    auto t4 = high_resolution_clock::now();
+    /*     auto addframe_ms_int = duration_cast<milliseconds>(t2 - t1);
+    auto updateparams_ms_int = duration_cast<milliseconds>(t3 - t2);
+    auto sendparams_ms_int = duration_cast<milliseconds>(t4 - t3);
+    std::cout << "Add frame: " << addframe_ms_int.count() << "ms" << " / Update: " << updateparams_ms_int.count() << "ms" << " / Send params: " << sendparams_ms_int.count() << "ms" << std::endl;
+
+    std::cout << " new exposure " << next_ir_exposure << " new gain " << new_exposure_params.gain << " db" << std::endl; */
+  }
+
+    void set_exposure_gain_aer(std_msgs::Header &header, cv::Mat &cv_frame, const rs2::video_frame &vf) {
+    const auto sequence = vf.get_frame_metadata(RS2_FRAME_METADATA_FRAME_COUNTER);
+    const auto actual_ir_exposure = vf.get_frame_metadata(RS2_FRAME_METADATA_ACTUAL_EXPOSURE);
+      const auto actual_ir_gain = vf.get_frame_metadata(RS2_FRAME_METADATA_GAIN_LEVEL);
+      //std::cout << " vf frame gain " << vf_actual_ir_gain <<  std::endl;
+      //double actual_ir_gain_db = 20*log10(double(actual_ir_gain));
+      double actual_ir_gain_db = 6*log2(double(actual_ir_gain/16));
+      //std::cout << " gain actual " <<  actual_ir_gain << std::endl;
+      //std::cout << " exposure actual " <<  actual_ir_exposure << std::endl;
+      //std::cout << " frame count " << sequence <<  std::endl;
+      // Add new frame
+
+      exp_node::ExposureParametersAer new_exposure_params;
+      auto t1 = high_resolution_clock::now();
+      if (sequence % 2 == 0) {
+        new_exposure_params = aer_controller.CameraCb(0,cv_frame,float(actual_ir_exposure)/1000000,actual_ir_gain_db,header.seq,header.stamp.toSec());
+      }
+      auto t2 = high_resolution_clock::now();
+      //std::cout << " exposure main " <<  new_exposure_params.exposure << std::endl;
+      //std::cout << " gain main " <<  new_exposure_params.gain << std::endl;
+
+      
+      unsigned long long int next_ir_exposure = (unsigned long long int)(new_exposure_params.exposure);
+      unsigned long long int next_ir_gain = (unsigned long long int)(pow(2,new_exposure_params.gain/6))*16;
+      //std::cout << " gain next " <<  next_ir_gain << std::endl;
+      //std::cout << " exposure next " <<  next_ir_exposure << std::endl;
+      if (sequence % 2 == 0) {
+        //std::cout << " even " << std::endl;
+        if (sequence % 4 != 0 && next_ir_gain != actual_ir_gain) {
+          rs2::sensor exposure_sensor = *rs2::sensor_from_frame(vf);
+          
+          if (next_ir_gain <16) exposure_sensor.set_option(RS2_OPTION_GAIN, 16);
+          else if (next_ir_gain > 248) exposure_sensor.set_option(RS2_OPTION_GAIN, 248);
+          else exposure_sensor.set_option(RS2_OPTION_GAIN, next_ir_gain);
+          //std::cout << " gain " <<  next_ir_gain << std::endl;
+        }
+        else if (sequence % 4 == 0 && next_ir_exposure != actual_ir_exposure) {
+          rs2::sensor exposure_sensor = *rs2::sensor_from_frame(vf);
+          if (next_ir_exposure < 0) exposure_sensor.set_option(RS2_OPTION_EXPOSURE, 1);
+          else if (next_ir_exposure > 200000) exposure_sensor.set_option(RS2_OPTION_EXPOSURE, 200000);
+          else exposure_sensor.set_option(RS2_OPTION_EXPOSURE, next_ir_exposure);
+          //std::cout << " exposure " <<  next_ir_exposure << std::endl;
+        }  
+      }
+      //else std::cout << " odd " << std::endl;
+
+    auto t3 = high_resolution_clock::now();
+
+
+    // Debug: Printing out processing times
+    auto t4 = high_resolution_clock::now();
+    auto addframe_ms_int = duration_cast<milliseconds>(t2 - t1);
+    auto updateparams_ms_int = duration_cast<milliseconds>(t3 - t2);
+    //auto sendparams_ms_int = duration_cast<milliseconds>(t4 - t3);
+    //std::cout << "Update : " << addframe_ms_int.count() << "ms" << " / Send : " << updateparams_ms_int.count() << "ms" << std::endl;
+
+    //std::cout << " new exposure " << next_ir_exposure << " new gain " << new_exposure_params.gain << " db" << std::endl; 
+  }
+
 static sensor_msgs::ImagePtr create_image_msg(const rs2::video_frame &vf,
                                               const std::string &frame_id,
                                               bool is_color,
-                                              bool mid_exposure_ts) {
+                                              bool mid_exposure_ts,
+                                              bool controller_add_frame,
+                                              bool set_custom_ae) {
   // Form msg stamp
   const uint64_t ts_ns = vframe2ts(vf, mid_exposure_ts);
   ros::Time msg_stamp;
@@ -55,8 +190,12 @@ static sensor_msgs::ImagePtr create_image_msg(const rs2::video_frame &vf,
   }
 
   cv::Mat cv_frame = frame2cvmat(vf, width, height, CV_8UC1);
+
+  if(controller_add_frame && set_custom_ae) set_exposure_gain_aer(header, cv_frame, vf); 
+ 
   return cv_bridge::CvImage(header, "mono8", cv_frame).toImageMsg();
 }
+
 
 static sensor_msgs::ImagePtr create_depth_msg(const rs2::depth_frame &df,
                                               const std::string &frame_id,
@@ -143,8 +282,10 @@ struct intel_d435i_node_t {
     // clang-format off
     ROS_PARAM(nh, nn + "/global_time", rgbd_config_.global_time);
     ROS_PARAM(nh, nn + "/correct_ts", rgbd_config_.correct_ts);
+    ROS_PARAM(nh, nn + "/set_custom_ae", rgbd_config_.set_custom_ae);
     ROS_PARAM(nh, nn + "/enable_rgb", rgbd_config_.enable_rgb);
     ROS_PARAM(nh, nn + "/enable_ir", rgbd_config_.enable_ir);
+    ROS_PARAM(nh, nn + "/enable_ir_left_only", rgbd_config_.enable_ir_left_only);
     ROS_PARAM(nh, nn + "/enable_depth", rgbd_config_.enable_depth);
     ROS_PARAM(nh, nn + "/enable_emitter", rgbd_config_.enable_emitter);
     ROS_PARAM(nh, nn + "/rgb_width", rgbd_config_.rgb_width);
@@ -157,6 +298,7 @@ struct intel_d435i_node_t {
     ROS_PARAM(nh, nn + "/ir_format", rgbd_config_.ir_format);
     ROS_PARAM(nh, nn + "/ir_frame_rate", rgbd_config_.ir_frame_rate);
     ROS_PARAM(nh, nn + "/ir_exposure", rgbd_config_.ir_exposure);
+    ROS_PARAM(nh, nn + "/ir_gain", rgbd_config_.ir_gain);
     ROS_PARAM(nh, nn + "/depth_width", rgbd_config_.depth_width);
     ROS_PARAM(nh, nn + "/depth_height", rgbd_config_.depth_height);
     ROS_PARAM(nh, nn + "/depth_format", rgbd_config_.depth_format);
@@ -185,6 +327,7 @@ struct intel_d435i_node_t {
     if (rgbd_config_.enable_ir) {
       image_transport::ImageTransport stereo_it(nh);
       ir0_pub_ = stereo_it.advertise(ir0_topic, 100);
+      if(!rgbd_config_.enable_ir_left_only)
       ir1_pub_ = stereo_it.advertise(ir1_topic, 100);
     }
     if (rgbd_config_.enable_depth) {
@@ -202,15 +345,32 @@ struct intel_d435i_node_t {
   void publish_ir_msgs(const rs2::video_frame &ir0,
                        const rs2::video_frame &ir1) {
     const auto correct_ts = rgbd_config_.correct_ts;
-    const auto cam0_msg = create_image_msg(ir0, "rs/ir0", false, correct_ts);
-    const auto cam1_msg = create_image_msg(ir1, "rs/ir1", false, correct_ts);
+    const auto set_custom_ae = rgbd_config_.set_custom_ae;
+    const auto cam0_msg = create_image_msg(ir0, "rs/ir0", false, correct_ts, true, set_custom_ae);
+    const auto cam1_msg = create_image_msg(ir1, "rs/ir1", false, correct_ts, false, set_custom_ae);
+    ir1_pub_.publish(cam1_msg);
     ir0_pub_.publish(cam0_msg);
+  }
+
+
+  void publish_ir0_msgs(const rs2::video_frame &ir0) {
+    const auto correct_ts = rgbd_config_.correct_ts;
+    const auto set_custom_ae = rgbd_config_.set_custom_ae;
+    const auto cam0_msg = create_image_msg(ir0, "rs/ir0", false, correct_ts, true, set_custom_ae);
+    ir0_pub_.publish(cam0_msg);
+  }
+
+  void publish_ir1_msgs(const rs2::video_frame &ir1) {
+    const auto correct_ts = rgbd_config_.correct_ts;
+    const auto set_custom_ae = rgbd_config_.set_custom_ae;
+    const auto cam1_msg = create_image_msg(ir1, "rs/ir1", false, correct_ts, false, set_custom_ae);
     ir1_pub_.publish(cam1_msg);
   }
 
   void publish_rgb0_msg(const rs2::video_frame &rgb) {
     const auto correct_ts = rgbd_config_.correct_ts;
-    const auto msg = create_image_msg(rgb, "rs/rgb0", true, correct_ts);
+    const auto set_custom_ae = rgbd_config_.set_custom_ae;
+    const auto msg = create_image_msg(rgb, "rs/rgb0", true, correct_ts, false, set_custom_ae);
     rgb0_pub_.publish(msg);
   }
 
@@ -247,6 +407,14 @@ struct intel_d435i_node_t {
 
       // Publish imu messages
       const auto msg = create_imu_msg(ts, gyro, accel, "rs/imu0");
+
+      // set AE controller IMU data
+      Eigen::Matrix<float,3,1> lin_accel; 
+      lin_accel << accel(0), accel(1), accel(2);
+      Eigen::Matrix<float,3,1> rot_vel; 
+      rot_vel << gyro(0),gyro(1),gyro(2);
+      controller.add_imu_meas(0,lin_accel,rot_vel,ros::Time{ts}.toSec());
+
       imu0_pub_.publish(msg);
     }
 
@@ -285,11 +453,24 @@ struct intel_d435i_node_t {
       if (const auto &fs = frame.as<rs2::frameset>()) {
         // IR0 & IR1
         const bool enable_ir = rgbd_config_.enable_ir;
+        const bool enable_ir_left_only = rgbd_config_.enable_ir_left_only;
         const auto ir0 = fs.get_infrared_frame(1);
-        const auto ir1 = fs.get_infrared_frame(2);
-        if (enable_ir && ir0 && ir1) {
-          publish_ir_msgs(ir0, ir1);
+        if (enable_ir && ir0) {
+          publish_ir0_msgs(ir0);
         }
+        if(!enable_ir_left_only){
+          const auto ir1 = fs.get_infrared_frame(2);
+            if (enable_ir && ir1) 
+              publish_ir1_msgs(ir1);
+        
+        }
+        
+        //if (enable_ir && ir0 && ir1) {
+        //  publish_ir_msgs(ir0, ir1);
+        //}
+
+
+
 
         // Align depth to rgb
         rs2::align align_to_color(RS2_STREAM_COLOR);
@@ -314,6 +495,31 @@ struct intel_d435i_node_t {
     // Connect and stream
     rs2::device device = rs2_connect();
     intel_d435i_t sensor(device, rgbd_config_, motion_config_, cb);
+
+    /*---------------------------------------------
+    * INITIALIZATION OF EXPOSURE/GAIN CONTROLLER
+    -----------------------------------------------*/
+
+    // TODO: Replace with a single init function that loads from YAML
+    Vector5f calib;
+    calib << 0.0, 0.0, 0.0, 0.0, 0.0 ;
+    Eigen::Matrix<float,4,4> T_imu_2_cam;
+    T_imu_2_cam << 0.99992724 , -0.01054832,
+       0.00585135, 0.00322414,
+       0.01048953, 0.99989509,
+       0.00998853, -0.01212793,
+       -0.0059561, -0.00992643,
+       0.99993299, -0.02028277, 0., 0., 0., 1.       ;
+    VectorNcorrect gamma_values;
+    gamma_values << 1.0/1.9, 1.0/1.5, 1.0/1.2, 1.0, 1.2, 1.5, 1.9;
+
+    controller.add_camera("left",640,480,2.0,389.75244464,387.96067921,calib);
+    controller.add_imu("imu",T_imu_2_cam);
+    controller.set_gamma_values(gamma_values);
+    controller.init();
+
+
+    aer_controller.init();
 
     // Pipelines are threads so we need a blocking loop
     signal(SIGINT, signal_handler);
