@@ -23,7 +23,7 @@
     <param name="ir_width" type="int" value="640" />
     <param name="ir_height" type="int" value="480" />
     <param name="ir_format" type="str" value="Y8" />
-    <param name="ir_frame_rate" type="int" value="30" />
+    <param name="ir_frame_rate" type="int" value="6" />
     <param name="ir_exposure" type="double" value="4000" />
     <param name="ir_gain" type="double" value="16" />
     <param name="depth_width" type="int" value="640" />

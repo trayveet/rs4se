@@ -16,9 +16,9 @@ namespace exp_node
     cv::Mat lookUpTable_metric(1, 256, CV_8U);
 
     void ExpNode::init(){
-        std::cout <<"Starting AER"<<"\n";
+        //std::cout <<"Starting AER"<<"\n";
         generate_LUT();
-        std::cout <<"Done initializing AER"<<"\n";
+        //std::cout <<"Done initializing AER"<<"\n";
     }
 
     //ExpNode::ExpNode(){
@@ -71,7 +71,7 @@ namespace exp_node
             for (int i=0; i<7; ++i)
             {
                 metric[i]= image_gradient_gamma(image_current, i)/1000000; // passing the corresponding index
-            std::cout << "\nmetric " << i << " is:" <<metric[i] <<std::endl;
+            //std::cout << "\nmetric " << i << " is:" <<metric[i] <<std::endl;
                 //std::cout << "  " <<metric[i] <<std::endl; // comment
             }
                             
@@ -97,14 +97,14 @@ namespace exp_node
             for ( int i = 0; i < 6; i++ ) {
                     
                 coeff[i] = *(coeff_curve+i);
-                std::cout << "\ncoeff " << i << " is:" << coeff[i] << std::endl; // comment
+                //std::cout << "\ncoeff " << i << " is:" << coeff[i] << std::endl; // comment
             }
 
             double metric_check = 0.0;
 
             max_gamma = findRoots1(coeff, metric[gamma_index]); // calling function findRoots1 to find opt_gamma
             
-            std::cout << "\nopt_gamma now is:  " << max_gamma << std::endl; //comment
+            //std::cout << "\nopt_gamma now is:  " << max_gamma << std::endl; //comment
             
             for (int i=0; i<6; i++) 
             {
@@ -161,11 +161,11 @@ namespace exp_node
 
             // Shim's 2014 version of update function
             //expNew = (1+ kp * alpha * (1-max_gamma)) * expCur; 
-            std::cout << "\nexpCur: " << expCur << "   expNew: "<< expNew << std::endl; //
+            //std::cout << "\nexpCur: " << expCur << "   expNew: "<< expNew << std::endl; //
 
             shutter_new = (4.0) * 1000000/(pow(2,expNew)); //[unit: micro-second]  Note: 7.84 = 2.8*2.8, for an F-number of 2.0 for D435i use 4.0 = 2.0*2.0	
             
-            std::cout << "\ngain: " << round(gain_cur) << "   shutter_new: "<< shutter_new << std::endl; //
+            //std::cout << "\ngain: " << round(gain_cur) << "   shutter_new: "<< shutter_new << std::endl; //
 
 
             if (shutter_new > upper_shutter)
@@ -204,7 +204,7 @@ namespace exp_node
             //std::cout << "\ngain: " << round(gain_cur) << "   shutter_new: "<< shutter_new << std::endl;
             //std::cout << "\ncurrent opt met: " << metric[gamma_index] << "; met at 1.0: " << metric[3]<<std::endl;
 
-            std::cout << "max gamma: " << max_gamma << " ; gain_new: " << gain_new << "; shutter_cur: "<< shutter_cur << " ; shutter_new:  " << shutter_new << std::endl;
+            //std::cout << "max gamma: " << max_gamma << " ; gain_new: " << gain_new << "; shutter_cur: "<< shutter_cur << " ; shutter_new:  " << shutter_new << std::endl;
 
             ///////////////////////////////////////////////////////////////////
             // Then call the function to determine what exposure time and gain to update
@@ -474,7 +474,7 @@ namespace exp_node
                 if (met_temp > check) // if the root can return a metric that is greater than current metric
                 {
                     opt_gamma = roots1[i];
-                    std::cout << "\n in function maximum metric is: " << met_temp << "\n" << std::endl;
+                    //std::cout << "\n in function maximum metric is: " << met_temp << "\n" << std::endl;
                 }
             }
             //std::cout << "eig(i) is: " << std::real(eig (i)) << "   ima: " << std::imag (eig (i)) << std::endl;

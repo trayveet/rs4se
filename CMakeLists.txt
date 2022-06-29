@@ -31,19 +31,12 @@ FIND_PACKAGE(
   cv_bridge
   image_transport
 )
-CATKIN_PACKAGE(
-  LIBRARIES ${PROJECT_NAME} vo_autoexpose
-  )
+
 INCLUDE_DIRECTORIES(
   include
   ${catkin_INCLUDE_DIRS}
   ${realsense2_INCLUDE_DIR})
 
-add_library(vo_autoexpose SHARED
-  src/vo_autoexpose.cpp 
-  include/vo_autoexpose/vo_autoexpose.h 
-  src/ 
-)
 
 add_library(auto_exp
   src/auto_exp.cpp 
@@ -51,10 +44,6 @@ add_library(auto_exp
   src/ 
 )
 
-target_link_libraries(vo_autoexpose
-  ${OpenCV_LIBS} 
-  ${EIGEN3_LIBS} 
-)
 
 target_link_libraries(auto_exp
   ${OpenCV_LIBS} 
@@ -67,7 +56,6 @@ SET(DEPS
   ${OpenCV_LIBS}
   ${catkin_LIBRARIES}
   boost_system
-  vo_autoexpose
   auto_exp
 )
 
