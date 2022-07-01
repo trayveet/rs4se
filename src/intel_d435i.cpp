@@ -3,10 +3,18 @@
 #include <thread>
 
 #include <ros/ros.h>
+#include "ros/time.h"
+#include "ros/serialization.h"
+#include <ros/console.h>
 #include <cv_bridge/cv_bridge.h>
 #include <sensor_msgs/Imu.h>
+#include <sensor_msgs/CameraInfo.h>
 #include <geometry_msgs/Vector3Stamped.h>
 #include <image_transport/image_transport.h>
+#include <pcl_ros/point_cloud.h>
+#include <pcl/point_types.h>
+#include <pcl_conversions/pcl_conversions.h>
+#include <pcl/filters/passthrough.h>
 
 #include <librealsense2/rs.hpp>
 
@@ -26,6 +34,9 @@ using std::chrono::milliseconds;
 
 
 exp_node::ExpNode aer_controller_ir; 
+
+typedef pcl::PointCloud<pcl::PointXYZ> PointCloud;
+using pcl_ptr = pcl::PointCloud<pcl::PointXYZ>::Ptr;
 
 
 
@@ -47,64 +58,87 @@ std::string ros_node_name(int argc, char *argv[]) {
 }
 
 
-    void set_exposure_gain_aer(std_msgs::Header &header, cv::Mat &cv_frame, const rs2::video_frame &vf) {
-    const auto sequence = vf.get_frame_metadata(RS2_FRAME_METADATA_FRAME_COUNTER);
-    const auto actual_ir_exposure = vf.get_frame_metadata(RS2_FRAME_METADATA_ACTUAL_EXPOSURE);
-      const auto actual_ir_gain = vf.get_frame_metadata(RS2_FRAME_METADATA_GAIN_LEVEL);
-      //std::cout << " vf frame gain " << vf_actual_ir_gain <<  std::endl;
-      //double actual_ir_gain_db = 20*log10(double(actual_ir_gain));
-      double actual_ir_gain_db = 6*log2(double(actual_ir_gain/16));
-      //std::cout << " gain actual " <<  actual_ir_gain << std::endl;
-      //std::cout << " exposure actual " <<  actual_ir_exposure << std::endl;
-      //std::cout << " frame count " << sequence <<  std::endl;
-      // Add new frame
+void set_exposure_gain_aer(std_msgs::Header &header, cv::Mat &cv_frame, const rs2::video_frame &vf) {
+const auto sequence = vf.get_frame_metadata(RS2_FRAME_METADATA_FRAME_COUNTER);
+const auto actual_ir_exposure = vf.get_frame_metadata(RS2_FRAME_METADATA_ACTUAL_EXPOSURE);
+  const auto actual_ir_gain = vf.get_frame_metadata(RS2_FRAME_METADATA_GAIN_LEVEL);
+  //std::cout << " vf frame gain " << vf_actual_ir_gain <<  std::endl;
+  //double actual_ir_gain_db = 20*log10(double(actual_ir_gain));
+  double actual_ir_gain_db = 6*log2(double(actual_ir_gain/16));
+  //std::cout << " gain actual " <<  actual_ir_gain << std::endl;
+  //std::cout << " exposure actual " <<  actual_ir_exposure << std::endl;
+  //std::cout << " frame count " << sequence <<  std::endl;
+  // Add new frame
 
-      exp_node::ExposureParametersAer new_exposure_params;
-      //auto t1 = high_resolution_clock::now();
-      if (sequence % 2 == 0) {
-        new_exposure_params = aer_controller_ir.CameraCb(0,cv_frame,float(actual_ir_exposure)/1000000,actual_ir_gain_db,header.seq,header.stamp.toSec());
-      }
-      //auto t2 = high_resolution_clock::now();
-      //std::cout << " exposure main " <<  new_exposure_params.exposure << std::endl;
-      //std::cout << " gain main " <<  new_exposure_params.gain << std::endl;
-
-      
-      unsigned long long int next_ir_exposure = (unsigned long long int)(new_exposure_params.exposure);
-      unsigned long long int next_ir_gain = (unsigned long long int)(pow(2,new_exposure_params.gain/6))*16;
-      //std::cout << " gain next " <<  next_ir_gain << std::endl;
-      //std::cout << " exposure next " <<  next_ir_exposure << std::endl;
-      if (sequence % 2 == 0) {
-        //std::cout << " even " << std::endl;
-        if (sequence % 4 != 0 && next_ir_gain != actual_ir_gain) {
-          rs2::sensor exposure_sensor = *rs2::sensor_from_frame(vf);
-          
-          if (next_ir_gain <16) exposure_sensor.set_option(RS2_OPTION_GAIN, 16);
-          else if (next_ir_gain > 248) exposure_sensor.set_option(RS2_OPTION_GAIN, 248);
-          else exposure_sensor.set_option(RS2_OPTION_GAIN, next_ir_gain);
-          //std::cout << " gain " <<  next_ir_gain << std::endl;
-        }
-        else if (sequence % 4 == 0 && next_ir_exposure != actual_ir_exposure) {
-          rs2::sensor exposure_sensor = *rs2::sensor_from_frame(vf);
-          if (next_ir_exposure < 0) exposure_sensor.set_option(RS2_OPTION_EXPOSURE, 1);
-          else if (next_ir_exposure > 200000) exposure_sensor.set_option(RS2_OPTION_EXPOSURE, 200000);
-          else exposure_sensor.set_option(RS2_OPTION_EXPOSURE, next_ir_exposure);
-          //std::cout << " exposure " <<  next_ir_exposure << std::endl;
-        }  
-      }
-      //else std::cout << " odd " << std::endl;
-
-    //auto t3 = high_resolution_clock::now();
-
-
-    // Debug: Printing out processing times
-    //auto t4 = high_resolution_clock::now();
-    //auto addframe_ms_int = duration_cast<milliseconds>(t2 - t1);
-    //auto updateparams_ms_int = duration_cast<milliseconds>(t3 - t2);
-    //auto sendparams_ms_int = duration_cast<milliseconds>(t4 - t3);
-    //std::cout << "Update : " << addframe_ms_int.count() << "ms" << " / Send : " << updateparams_ms_int.count() << "ms" << std::endl;
-
-    //std::cout << " new exposure " << next_ir_exposure << " new gain " << new_exposure_params.gain << " db" << std::endl; 
+  exp_node::ExposureParametersAer new_exposure_params;
+  //auto t1 = high_resolution_clock::now();
+  if (sequence % 2 == 0) {
+    new_exposure_params = aer_controller_ir.CameraCb(0,cv_frame,float(actual_ir_exposure)/1000000,actual_ir_gain_db,header.seq,header.stamp.toSec());
   }
+  //auto t2 = high_resolution_clock::now();
+  //std::cout << " exposure main " <<  new_exposure_params.exposure << std::endl;
+  //std::cout << " gain main " <<  new_exposure_params.gain << std::endl;
+
+  
+  unsigned long long int next_ir_exposure = (unsigned long long int)(new_exposure_params.exposure);
+  unsigned long long int next_ir_gain = (unsigned long long int)(pow(2,new_exposure_params.gain/6))*16;
+  //std::cout << " gain next " <<  next_ir_gain << std::endl;
+  //std::cout << " exposure next " <<  next_ir_exposure << std::endl;
+  if (sequence % 2 == 0) {
+    //std::cout << " even " << std::endl;
+    if (sequence % 4 != 0 && next_ir_gain != actual_ir_gain) {
+      rs2::sensor exposure_sensor = *rs2::sensor_from_frame(vf);
+      
+      if (next_ir_gain <16) exposure_sensor.set_option(RS2_OPTION_GAIN, 16);
+      else if (next_ir_gain > 248) exposure_sensor.set_option(RS2_OPTION_GAIN, 248);
+      else exposure_sensor.set_option(RS2_OPTION_GAIN, next_ir_gain);
+      //std::cout << " gain " <<  next_ir_gain << std::endl;
+    }
+    else if (sequence % 4 == 0 && next_ir_exposure != actual_ir_exposure) {
+      rs2::sensor exposure_sensor = *rs2::sensor_from_frame(vf);
+      if (next_ir_exposure < 0) exposure_sensor.set_option(RS2_OPTION_EXPOSURE, 1);
+      else if (next_ir_exposure > 200000) exposure_sensor.set_option(RS2_OPTION_EXPOSURE, 200000);
+      else exposure_sensor.set_option(RS2_OPTION_EXPOSURE, next_ir_exposure);
+      //std::cout << " exposure " <<  next_ir_exposure << std::endl;
+    }  
+  }
+  //else std::cout << " odd " << std::endl;
+
+//auto t3 = high_resolution_clock::now();
+
+
+// Debug: Printing out processing times
+//auto t4 = high_resolution_clock::now();
+//auto addframe_ms_int = duration_cast<milliseconds>(t2 - t1);
+//auto updateparams_ms_int = duration_cast<milliseconds>(t3 - t2);
+//auto sendparams_ms_int = duration_cast<milliseconds>(t4 - t3);
+//std::cout << "Update : " << addframe_ms_int.count() << "ms" << " / Send : " << updateparams_ms_int.count() << "ms" << std::endl;
+
+//std::cout << " new exposure " << next_ir_exposure << " new gain " << new_exposure_params.gain << " db" << std::endl; 
+    //std::cout << " new exposure " << next_ir_exposure << " new gain " << new_exposure_params.gain << " db" << std::endl; 
+//std::cout << " new exposure " << next_ir_exposure << " new gain " << new_exposure_params.gain << " db" << std::endl; 
+}
+
+pcl_ptr points_to_pcl(const rs2::points& points)
+{
+    pcl_ptr cloud(new pcl::PointCloud<pcl::PointXYZ>);
+
+    auto sp = points.get_profile().as<rs2::video_stream_profile>();
+    cloud->width = sp.width();
+    cloud->height = sp.height();
+    cloud->is_dense = false;
+    cloud->points.resize(points.size());
+    auto ptr = points.get_vertices();
+    for (auto& p : cloud->points)
+    {
+        p.x = ptr->x;
+        p.y = ptr->y;
+        p.z = ptr->z;
+        ptr++;
+    }
+
+    return cloud;
+}
 
 static sensor_msgs::ImagePtr create_image_msg(const rs2::video_frame &vf,
                                               const std::string &frame_id,
@@ -127,7 +161,7 @@ static sensor_msgs::ImagePtr create_image_msg(const rs2::video_frame &vf,
   const int height = vf.get_height();
   if (is_color) {
     cv::Mat cv_frame = frame2cvmat(vf, width, height, CV_8UC3);
-    return cv_bridge::CvImage(header, "rgb8", cv_frame).toImageMsg();
+    return cv_bridge::CvImage(header, "8UC3", cv_frame).toImageMsg();
   }
 
   cv::Mat cv_frame = frame2cvmat(vf, width, height, CV_8UC1);
@@ -156,9 +190,117 @@ static sensor_msgs::ImagePtr create_depth_msg(const rs2::depth_frame &df,
   const int width = df.get_width();
   const int height = df.get_height();
   cv::Mat cv_frame = frame2cvmat(df, width, height, CV_16UC1);
-  const auto msg = cv_bridge::CvImage(header, "mono16", cv_frame).toImageMsg();
+  const auto msg = cv_bridge::CvImage(header, "16UC1", cv_frame).toImageMsg();
 
   return msg;
+}
+
+ static PointCloud::Ptr create_pointcloud_msg(const rs2::depth_frame &df,
+                                              const rs2::video_frame &vf,
+                                              const std::string &frame_id,
+                                              const bool mid_exposure_ts) {
+
+  // Declare pointcloud object, for calculating pointclouds and texture mappings
+  rs2::pointcloud pc;
+  // We want the points object to be persistent so we can display the last cloud when a frame drops
+  rs2::points points;
+
+  // Tell pointcloud object to map to this color frame
+  pc.map_to(vf);
+  // Generate the pointcloud and texture mappings
+  points = pc.calculate(df);
+
+  auto pcl_points = points_to_pcl(points);
+
+
+  pcl_ptr cloud(new pcl::PointCloud<pcl::PointXYZ>);
+
+  // Form msg header
+  std_msgs::Header header;
+  header.frame_id = frame_id;
+  
+  // Image message
+  const int width = df.get_width();
+  const int height = df.get_height();
+
+  PointCloud::Ptr msg (new PointCloud);
+  msg->header.frame_id = frame_id;
+
+  msg->height = height;
+  msg->width = width;
+
+  msg->points.resize(points.size());
+  auto ptr = points.get_vertices();
+  for (auto& p : msg->points)
+  {
+
+      msg->points.push_back (pcl::PointXYZ(ptr->x, ptr->y, ptr->z));
+      ptr++;
+  }
+  //
+  
+  msg->is_dense = false;
+  pcl_conversions::toPCL(ros::Time::now(), msg->header.stamp);
+  
+  return msg;
+} 
+
+static sensor_msgs::CameraInfoPtr create_depth_camera_info_msg(const rs2::depth_frame &df,
+                                              const std::string &frame_id,
+                                              const bool mid_exposure_ts) {
+
+  // Form msg stamp
+  const uint64_t ts_ns = vframe2ts(df, mid_exposure_ts);
+  // should work fine since depth_frame is derived from video frame
+  ros::Time msg_stamp;
+  msg_stamp.fromNSec(ts_ns);
+
+  // Form msg header
+  std_msgs::Header header;
+  header.frame_id = frame_id;
+  header.stamp = msg_stamp;
+
+  sensor_msgs::CameraInfoPtr msg;
+  msg.reset(new sensor_msgs::CameraInfo);
+  msg->header = header;
+
+  // Image message
+  const int width = df.get_width();
+  const int height = df.get_height();
+  
+  msg->height = height;
+  msg->width = width;
+  msg->distortion_model = "plumb_bob";
+// \"plumb_bob\", the 5 parameters are: (k1, k2, t1, t2, k3).\n\
+
+// Intrinsic camera matrix for the raw (distorted) images.\n\
+//     [fx  0 cx]
+// K = [ 0 fy cy]
+//     [ 0  0  1]
+
+// Projection/camera matrix
+//     [fx'  0  cx' Tx]
+// P = [ 0  fy' cy' Ty]
+//     [ 0   0   1   0]
+
+
+  msg->D.resize(5); // All 0, no distortion
+  msg->K[0] = 389.75244464;
+  msg->K[2] = 331.49985938;
+  msg->K[4] = 387.96067921;
+  msg->K[5] = 229.15638747;
+  msg->K[8] = 1.0;
+  msg->R[0] = 1.0;
+  msg->R[4] = 1.0;
+  msg->R[8] = 1.0;
+  msg->P[0] = 389.75244464;
+  msg->P[2] = 331.49985938;
+  msg->P[5] = 387.96067921;
+  msg->P[6] = 229.15638747;
+  msg->P[10] = 1.0;
+
+  return msg;
+
 }
 
 static geometry_msgs::Vector3Stamped
@@ -211,6 +353,8 @@ struct intel_d435i_node_t {
   ros::Publisher gyro0_pub_;
   ros::Publisher accel0_pub_;
   ros::Publisher imu0_pub_;
+  ros::Publisher depthinfo_pub;
+  ros::Publisher pub;
 
   rs_motion_module_config_t motion_config_;
   rs_rgbd_module_config_t rgbd_config_;
@@ -259,6 +403,8 @@ struct intel_d435i_node_t {
     const auto gyro0_topic = nn + "/gyro0/data";
     const auto accel0_topic = nn + "/accel0/data";
     const auto imu0_topic = nn + "/imu0/data";
+    const auto pointcloud_topic = nn + "/pointcloud/data";
+    const auto depth_info_topic = nn + "/depth0/camera_info";
     // -- RGB module
     if (rgbd_config_.enable_rgb) {
       image_transport::ImageTransport rgb_it(nh);
@@ -274,6 +420,9 @@ struct intel_d435i_node_t {
     if (rgbd_config_.enable_depth) {
       image_transport::ImageTransport depth_it(nh);
       depth0_pub_ = depth_it.advertise(depth0_topic, 100);
+      depthinfo_pub = nh.advertise<sensor_msgs::CameraInfo>(depth_info_topic, 100);
+
+      //pub = nh.advertise<PointCloud> (pointcloud_topic, 100);
     }
     // -- Motion module
     if (motion_config_.enable_motion) {
@@ -319,6 +468,19 @@ struct intel_d435i_node_t {
     const auto correct_ts = rgbd_config_.correct_ts;
     const auto msg = create_depth_msg(depth, "rs/depth0", correct_ts);
     depth0_pub_.publish(msg);
+  }
+
+  void publish_depth_info_msg(const rs2::video_frame &depth) {
+    const auto correct_ts = rgbd_config_.correct_ts;
+    const auto msg = create_depth_camera_info_msg(depth, "rs/depthinfo", correct_ts);
+    depthinfo_pub.publish(msg);
+  }
+  
+
+  void publish_pointcloud_msg(const rs2::video_frame &depth , const rs2::video_frame &rgb) {
+    const auto correct_ts = rgbd_config_.correct_ts;
+    const auto msg = create_pointcloud_msg(depth, rgb, "rs/pointcloud", correct_ts);
+    pub.publish (msg);
   }
 
   void publish_accel0_msg(const rs2::motion_frame &mf) {
@@ -422,14 +584,17 @@ struct intel_d435i_node_t {
         const auto depth = fs_aligned.get_depth_frame();
         if (enable_depth && depth) {
           publish_depth0_msg(depth);
+          publish_depth_info_msg(depth);
         }
+/*         if (rgb && depth){
+          publish_pointcloud_msg(depth, rgb);  
+        } */
       }
     };
     // Connect and stream
     rs2::device device = rs2_connect();
     intel_d435i_t sensor(device, rgbd_config_, motion_config_, cb);
-
-
+    if (rgbd_config_.set_custom_ae) aer_controller_ir.init();
     // Pipelines are threads so we need a blocking loop
     signal(SIGINT, signal_handler);
     while (keep_running) {

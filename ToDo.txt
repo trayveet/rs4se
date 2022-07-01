@@ -1,0 +1,3 @@
+To do
+Remove point cloud code
+create yaml loader to get camera info from a file instead of hard coding

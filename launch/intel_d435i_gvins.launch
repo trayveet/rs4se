@@ -7,14 +7,14 @@
       output="screen">
     <param name="global_time" type="bool" value="true" />
     <param name="correct_ts" type="bool" value="true" />
-    <param name="set_custom_ae" type="bool" value="false" />
+    <param name="set_custom_ae" type="bool" value="true" />
 
     <!-- RGBD -->
     <param name="enable_rgb" type="bool" value="true" />
     <param name="enable_ir" type="bool" value="true" />
     <param name="enable_ir_left_only" type="bool" value="false" />
     <param name="enable_depth" type="bool" value="true" />
-    <param name="enable_emitter" type="bool" value="true" />
+    <param name="enable_emitter" type="bool" value="false" />
     <param name="rgb_width" value="640"/>
     <param name="rgb_height" value="480"/>
     <param name="rgb_frame_rate" value="30"/>

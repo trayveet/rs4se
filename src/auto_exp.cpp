@@ -16,9 +16,9 @@ namespace exp_node
     cv::Mat lookUpTable_metric(1, 256, CV_8U);
 
     void ExpNode::init(){
-        //std::cout <<"Starting AER"<<"\n";
+        std::cout <<"Starting AER"<<"\n";
         generate_LUT();
-        //std::cout <<"Done initializing AER"<<"\n";
+        std::cout <<"Done initializing AER"<<"\n";
     }
 
     //ExpNode::ExpNode(){
