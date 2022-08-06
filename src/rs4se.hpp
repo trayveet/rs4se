@@ -453,6 +453,7 @@ struct rs_rgbd_module_config_t {
   bool global_time = true;
   bool correct_ts = true;
   bool set_custom_ae = false;
+  bool rgb_set_ae = false;
   bool enable_rgb = true;
   bool enable_ir = true;
   bool enable_ir_left_only = false;
@@ -471,6 +472,7 @@ struct rs_rgbd_module_config_t {
   int ir_frame_rate = 30;
   double ir_exposure = 10000.0;
   double ir_gain = 16.0;
+  int ir_sync = 0;
 
   int depth_width = 640;
   int depth_height = 480;
@@ -583,6 +585,7 @@ struct rs_rgbd_module_t {
 struct intel_d435i_t {
   bool is_running_ = false;
   bool configured_ = false;
+  int last_frame = 0;
 
   rs2::context ctx_;
   rs2::device &device_;
@@ -634,7 +637,8 @@ struct intel_d435i_t {
         FATAL("This RealSense device does not have a [Stereo Module]");
       }
       rgb_.set_option(RS2_OPTION_GLOBAL_TIME_ENABLED, rgbd_conf_.global_time);
-			rgb_.set_option(RS2_OPTION_EXPOSURE, rgbd_conf_.rgb_exposure);
+      if (!rgbd_conf_.rgb_set_ae) rgb_.set_option(RS2_OPTION_EXPOSURE, rgbd_conf_.rgb_exposure);
+      else rgb_.set_option(RS2_OPTION_ENABLE_AUTO_EXPOSURE, true);
 			cfg.enable_stream(RS2_STREAM_COLOR,
                         rgbd_conf_.rgb_width,
                         rgbd_conf_.rgb_height,
@@ -658,6 +662,11 @@ struct intel_d435i_t {
       stereo_.set_option(RS2_OPTION_EMITTER_ENABLED, rgbd_conf_.enable_emitter);
       stereo_.set_option(RS2_OPTION_GLOBAL_TIME_ENABLED, rgbd_conf_.global_time);
       stereo_.set_option(RS2_OPTION_GAIN, rgbd_conf_.ir_gain);
+      stereo_.set_option(RS2_OPTION_INTER_CAM_SYNC_MODE, (float)(rgbd_conf_.ir_sync));
+
+      if(rgbd_conf_.ir_sync > 0) {
+        LOG_WARN("IR Camera Sync is Set! %f", stereo_.get_option(RS2_OPTION_INTER_CAM_SYNC_MODE));
+      }
 
       // IMPORTANT: Indexing for stereo camera starts from 1 not 0.
       cfg.enable_stream(RS2_STREAM_INFRARED,

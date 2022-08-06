@@ -9,6 +9,7 @@
 #include <cv_bridge/cv_bridge.h>
 #include <sensor_msgs/Imu.h>
 #include <sensor_msgs/CameraInfo.h>
+#include <sensor_msgs/TimeReference.h>
 #include <geometry_msgs/Vector3Stamped.h>
 #include <image_transport/image_transport.h>
 #include <pcl_ros/point_cloud.h>
@@ -38,7 +39,7 @@ exp_node::ExpNode aer_controller_ir;
 typedef pcl::PointCloud<pcl::PointXYZ> PointCloud;
 using pcl_ptr = pcl::PointCloud<pcl::PointXYZ>::Ptr;
 
-
+int last_frame = 0;
 
 // Signal handler
 bool keep_running = true;
@@ -161,7 +162,7 @@ static sensor_msgs::ImagePtr create_image_msg(const rs2::video_frame &vf,
   const int height = vf.get_height();
   if (is_color) {
     cv::Mat cv_frame = frame2cvmat(vf, width, height, CV_8UC3);
-    return cv_bridge::CvImage(header, "8UC3", cv_frame).toImageMsg();
+    return cv_bridge::CvImage(header, "rgb8", cv_frame).toImageMsg();
   }
 
   cv::Mat cv_frame = frame2cvmat(vf, width, height, CV_8UC1);
@@ -303,6 +304,25 @@ static sensor_msgs::CameraInfoPtr create_depth_camera_info_msg(const rs2::depth_
 
 }
 
+static sensor_msgs::TimeReference create_external_trigger_msg(const rs2::video_frame &vf, const std::string &frame_id) {
+  // Form msg stamp
+  const auto ts_ms = vf.get_timestamp();
+  const auto ts_ns = str2ts(std::to_string(ts_ms));
+  // should work fine since depth_frame is derived from video frame
+  ros::Time msg_stamp;
+  msg_stamp.fromNSec(ts_ns);
+
+  // Form msg header
+  std_msgs::Header header;
+  header.frame_id = frame_id;
+  header.stamp = msg_stamp;   
+
+  sensor_msgs::TimeReference msg;
+  msg.header = header;   
+  msg.time_ref = msg_stamp;
+  return msg;                                        
+}
+
 static geometry_msgs::Vector3Stamped
 create_vec3_msg(const rs2::motion_frame &f, const std::string &frame_id) {
   // Form msg stamp
@@ -353,8 +373,9 @@ struct intel_d435i_node_t {
   ros::Publisher gyro0_pub_;
   ros::Publisher accel0_pub_;
   ros::Publisher imu0_pub_;
-  ros::Publisher depthinfo_pub;
-  ros::Publisher pub;
+  ros::Publisher depthinfo_pub_;
+  ros::Publisher external_trigger_pub_;
+  ros::Publisher pointcloud_pub_;
 
   rs_motion_module_config_t motion_config_;
   rs_rgbd_module_config_t rgbd_config_;
@@ -368,6 +389,7 @@ struct intel_d435i_node_t {
     ROS_PARAM(nh, nn + "/global_time", rgbd_config_.global_time);
     ROS_PARAM(nh, nn + "/correct_ts", rgbd_config_.correct_ts);
     ROS_PARAM(nh, nn + "/set_custom_ae", rgbd_config_.set_custom_ae);
+    ROS_PARAM(nh, nn + "/rgb_set_ae", rgbd_config_.rgb_set_ae);
     ROS_PARAM(nh, nn + "/enable_rgb", rgbd_config_.enable_rgb);
     ROS_PARAM(nh, nn + "/enable_ir", rgbd_config_.enable_ir);
     ROS_PARAM(nh, nn + "/enable_ir_left_only", rgbd_config_.enable_ir_left_only);
@@ -384,6 +406,7 @@ struct intel_d435i_node_t {
     ROS_PARAM(nh, nn + "/ir_frame_rate", rgbd_config_.ir_frame_rate);
     ROS_PARAM(nh, nn + "/ir_exposure", rgbd_config_.ir_exposure);
     ROS_PARAM(nh, nn + "/ir_gain", rgbd_config_.ir_gain);
+    ROS_PARAM(nh, nn + "/ir_sync", rgbd_config_.ir_sync);
     ROS_PARAM(nh, nn + "/depth_width", rgbd_config_.depth_width);
     ROS_PARAM(nh, nn + "/depth_height", rgbd_config_.depth_height);
     ROS_PARAM(nh, nn + "/depth_format", rgbd_config_.depth_format);
@@ -405,6 +428,7 @@ struct intel_d435i_node_t {
     const auto imu0_topic = nn + "/imu0/data";
     const auto pointcloud_topic = nn + "/pointcloud/data";
     const auto depth_info_topic = nn + "/depth0/camera_info";
+    const auto trigger_topic = nn + "/external_trigger";
     // -- RGB module
     if (rgbd_config_.enable_rgb) {
       image_transport::ImageTransport rgb_it(nh);
@@ -420,9 +444,11 @@ struct intel_d435i_node_t {
     if (rgbd_config_.enable_depth) {
       image_transport::ImageTransport depth_it(nh);
       depth0_pub_ = depth_it.advertise(depth0_topic, 100);
-      depthinfo_pub = nh.advertise<sensor_msgs::CameraInfo>(depth_info_topic, 100);
-
-      //pub = nh.advertise<PointCloud> (pointcloud_topic, 100);
+      depthinfo_pub_ = nh.advertise<sensor_msgs::CameraInfo>(depth_info_topic, 100);
+      //pointcloud_pub_ = nh.advertise<PointCloud> (pointcloud_topic, 100);
+    }
+    if (rgbd_config_.ir_sync > 0){
+      external_trigger_pub_ = nh.advertise<sensor_msgs::TimeReference>(trigger_topic, 100);
     }
     // -- Motion module
     if (motion_config_.enable_motion) {
@@ -473,14 +499,19 @@ struct intel_d435i_node_t {
   void publish_depth_info_msg(const rs2::video_frame &depth) {
     const auto correct_ts = rgbd_config_.correct_ts;
     const auto msg = create_depth_camera_info_msg(depth, "rs/depthinfo", correct_ts);
-    depthinfo_pub.publish(msg);
+    depthinfo_pub_.publish(msg);
   }
-  
+
+  void publish_external_trigger_msg(const rs2::video_frame &ir0) {
+    const auto correct_ts = rgbd_config_.correct_ts;
+    const auto msg = create_external_trigger_msg(ir0,"/external_trigger");
+    external_trigger_pub_.publish(msg);
+  } 
 
   void publish_pointcloud_msg(const rs2::video_frame &depth , const rs2::video_frame &rgb) {
     const auto correct_ts = rgbd_config_.correct_ts;
     const auto msg = create_pointcloud_msg(depth, rgb, "rs/pointcloud", correct_ts);
-    pub.publish (msg);
+    pointcloud_pub_.publish (msg);
   }
 
   void publish_accel0_msg(const rs2::motion_frame &mf) {
@@ -550,9 +581,21 @@ struct intel_d435i_node_t {
         // IR0 & IR1
         const bool enable_ir = rgbd_config_.enable_ir;
         const bool enable_ir_left_only = rgbd_config_.enable_ir_left_only;
+        const int ir_sync = rgbd_config_.ir_sync;
         const auto ir0 = fs.get_infrared_frame(1);
         if (enable_ir && ir0) {
+          const auto sequence = ir0.get_frame_metadata(RS2_FRAME_METADATA_FRAME_COUNTER);
+          //const auto gpio = ir0.get_frame_metadata(RS2_FRAME_METADATA_GPIO_INPUT_DATA);
+          //std::cout << "gpio " << gpio <<   std::endl;
+          
+          // skip repeated frames
+          if (sequence == last_frame){
+            //std::cout << "repeated frame " << last_frame <<   std::endl;
+            return;
+          }
+          last_frame = sequence;
           publish_ir0_msgs(ir0);
+          //std::cout << "published sequence " << sequence <<   std::endl;
         }
         if(!enable_ir_left_only){
           const auto ir1 = fs.get_infrared_frame(2);
@@ -560,35 +603,37 @@ struct intel_d435i_node_t {
               publish_ir1_msgs(ir1);
         
         }
-        
-        //if (enable_ir && ir0 && ir1) {
-        //  publish_ir_msgs(ir0, ir1);
-        //}
-
-
-
-
+        if (enable_ir && ir0) {
+          rs2_timestamp_domain ir_timestamp_domain;
+          ir_timestamp_domain = fs.get_frame_timestamp_domain();
+          //std::cout << " ir_timestamp_domain " << ir_timestamp_domain <<  std::endl;
+          if (ir_sync > 0) publish_external_trigger_msg(ir0);
+        }
         // Align depth to rgb
         rs2::align align_to_color(RS2_STREAM_COLOR);
-        const auto fs_aligned = align_to_color.process(fs);
+        //const auto fs_aligned = align_to_color.process(fs);
 
         // RGB
         const bool enable_rgb = rgbd_config_.enable_rgb;
-        const auto rgb = fs_aligned.get_color_frame();
+        //const auto rgb = fs_aligned.get_color_frame();
+        const auto rgb = fs.get_color_frame();
         if (enable_rgb && rgb) {
           publish_rgb0_msg(rgb);
         }
 
         // Depth image
         const bool enable_depth = rgbd_config_.enable_depth;
-        const auto depth = fs_aligned.get_depth_frame();
+        //const auto depth = fs_aligned.get_depth_frame();
+        const auto depth = fs.get_depth_frame(); //unaligned to color
         if (enable_depth && depth) {
           publish_depth0_msg(depth);
           publish_depth_info_msg(depth);
         }
-/*         if (rgb && depth){
-          publish_pointcloud_msg(depth, rgb);  
-        } */
+        /* D'ont use it's not ready and is slooooow
+        if (rgb && depth){
+            publish_pointcloud_msg(depth, rgb);  
+          } 
+          */
       }
     };
     // Connect and stream
